@@ -20,7 +20,7 @@ Uses OpenCV, Pillow, and Windows API to automate HoloCure's fishing mini-game.
 
 The HoloCure window must be on the foreground, but you can still use your PC as usual as the script does not interfere with your inputs.
 
-Make sure your mouse is not on top of the HoloCure window (specifically the target area of the phishing mini-game).
+Make sure your mouse is not on top of the HoloCure window (specifically the target area of the fishing mini-game).
 
 ## Known issues
 
