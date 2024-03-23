@@ -24,6 +24,6 @@ Make sure your mouse is not on top of the HoloCure window (specifically the targ
 
 ## Known issues
 
-- Working only on Windows
+- Works only on Windows
 - Tested only with 1280x720 resolution of the HoloCure window
 - Template matching might fail when the keys are too close to each other and/or on higher speed levels.

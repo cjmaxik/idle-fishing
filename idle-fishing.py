@@ -68,6 +68,8 @@ def main():
 
     # Send escape key as a test
     win32api.PostMessage(hwndMain, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
+    time.sleep(0.05)
+    win32api.PostMessage(hwndMain, win32con.WM_KEYUP, win32con.VK_ESCAPE, 0)
 
     while True:
         sc = grab_frame(hwndMain)
