@@ -9,6 +9,7 @@ threshold = 0.8
 
 # HoloCure window
 windowName = "HoloCure"
+activeArea = (747, 480, 850, 570)
 hwndMain = 0
 
 
@@ -18,15 +19,15 @@ def grab_frame(hwnd):
 
     img = ImageGrab.grab(
         bbox=win32gui.GetWindowRect(hwnd),
-        include_layered_windows=True,
         all_screens=True,
     )
 
     # debug: show imagegrab result
     if DEBUG:
         cv2.imshow("Main Image", np.array(img))
+        cv2.waitKey(1)
 
-    return img.crop((747, 480, 850, 570))
+    return img.crop(activeArea)
 
 
 def generate_patterns():
