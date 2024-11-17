@@ -5,6 +5,8 @@ import win32gui
 import win32api
 import win32con
 import time
+import threading
+import concurrent.futures
 
 # Constants
 DEBUG = False
@@ -21,21 +23,20 @@ KEY_TO_PATTERN = {
     "window": 0x0D,
 }
 
-# Variable to cache bounding boxes
+# Cache variables
 bbox_cache = {}
+match_found = threading.Event()
 
 
 def generate_patterns() -> list:
     """
-    Generates a list of patterns for template matching.
-
-    The function reads monochrome images from the template folder for each key in `KEY_TO_PATTERN`.
-    Each pattern is read using OpenCV's `cv2.imread`, with the monochrome flag, and adds
-    an extra dimension to the image to match the expected input format for template matching.
+    Generates a list of patterns using the images in the folder specified by the
+    `TEMPLATE_FOLDER` constant.
 
     Returns:
-        A list of tuples where each tuple contains a key and the
-        corresponding pattern image as a numpy array.
+        A list of tuples, where each tuple contains a key from `KEY_TO_PATTERN` and
+        the corresponding grayscale image loaded from the file specified by the
+        `TEMPLATE_FOLDER` constant.
     """
     return [
         (i, cv2.imread(TEMPLATE_FOLDER % i, cv2.IMREAD_GRAYSCALE))
@@ -88,8 +89,8 @@ def grab_frame(hwnd: int) -> np.ndarray | None:
     bbox = get_bbox(win32gui.GetWindowRect(hwnd))
 
     img = ImageGrab.grab(bbox, all_screens=True).convert("L")
-    img = np.array(img)
-    img[img <= 248] = 0
+    img = np.array(img, dtype=np.uint8)
+    np.putmask(img, img <= 248, 0)
 
     # debug: show imagegrab result
     if DEBUG:
@@ -127,18 +128,33 @@ def press_key(hwnd: int, key: str) -> None:
         win32api.PostMessage(hwnd, win32con.WM_KEYUP, input, 0)
 
 
+def match_pattern_thread(hwnd, sc, pattern, key):
+    if match_found.is_set():
+        return
+
+    res = cv2.matchTemplate(sc, pattern, cv2.TM_CCORR_NORMED)
+    _, max_val, _, _ = cv2.minMaxLoc(res)
+
+    if max_val < THRESHOLD:
+        return
+
+    match_found.set()
+    press_key(hwnd, key)
+
+
 def main():
     """
-    The main entry point of the script.
+    Main entry point of the script.
 
-    Performs the following tasks:
+    Grabs a frame from the HoloCure window and performs template matching with the patterns specified in `patterns`.
+    If a match is found, simulates the key press specified in `KEY_TO_PATTERN`.
+    If the key is "window", sends the key press twice with a short delay between.
+    If the HoloCure window is not found, prints a message and exits.
+    If the screen is blank, skips the frame and continues to the next iteration.
+    Uses `concurrent.futures` to run the template matching in parallel.
 
-    1. Generates a list of patterns using `generate_patterns`.
-    2. Finds the HoloCure window and sets it as the foreground.
-    3. Sends an escape key event as a test.
-    4. Grabs the screen and performs template matching on it using `grab_frame` and `cv2.matchTemplate`.
-    5. If a match is found, sends the corresponding key event using `press_key`.
-    6. Repeats steps 4-5 indefinitely.
+        Returns:
+        None
     """
     patterns = generate_patterns()
 
@@ -159,23 +175,23 @@ def main():
             print("HoloCure window not found")
             return
 
+        match_found.clear()
+
         # Skip if the screen is blank
         if sc.sum() == 0:
             continue
 
         # Perform template matching
-        for key, pattern in patterns:
-            res = cv2.matchTemplate(sc, pattern, cv2.TM_CCORR_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=len(patterns)
+        ) as executor:
+            futures = []
+            for key, pattern in patterns:
+                future = executor.submit(match_pattern_thread, hwnd, sc, pattern, key)
+                futures.append(future)
 
-            if max_val < THRESHOLD:
-                continue
-
-            if DEBUG:
-                print("found '%s'" % key)
-
-            press_key(hwnd, key)
-            break
+            for future in concurrent.futures.as_completed(futures):
+                pass
 
 
 if __name__ == "__main__":
