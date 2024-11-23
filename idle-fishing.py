@@ -9,11 +9,11 @@ import threading
 import concurrent.futures
 
 # Constants
-DEBUG = False
+DEBUG = True
 THRESHOLD = 0.9
 TEMPLATE_FOLDER = "./patterns/%s.png"
 WINDOW_NAME = "HoloCure"
-ACTIVE_AREA = (740, 510, 840, 560)
+ACTIVE_AREA = (745, 510, 840, 560)
 KEY_TO_PATTERN = {
     "up": 0x57,
     "down": 0x53,
@@ -25,7 +25,6 @@ KEY_TO_PATTERN = {
 
 # Cache variables
 bbox_cache = {}
-match_found = threading.Event()
 
 
 def generate_patterns() -> list:
@@ -99,6 +98,12 @@ def grab_frame(hwnd: int) -> np.ndarray | None:
     return img
 
 
+def post_message(hwnd: int, input: int | None) -> None:
+    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, input, 0)
+    time.sleep(0.05)
+    win32api.PostMessage(hwnd, win32con.WM_KEYUP, input, 0)
+
+
 def press_key(hwnd: int, key: str) -> None:
     """
     Simulates a key press event on the window specified by `hwnd`.
@@ -113,24 +118,17 @@ def press_key(hwnd: int, key: str) -> None:
 
     if key == "window":
         # Send Space two times
-        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, input, 0)
-        time.sleep(0.05)
-        win32api.PostMessage(hwnd, win32con.WM_KEYUP, input, 0)
-
+        post_message(hwnd, input)
         time.sleep(0.5)
-
-        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, input, 0)
-        time.sleep(0.05)
-        win32api.PostMessage(hwnd, win32con.WM_KEYUP, input, 0)
+        post_message(hwnd, input)
     else:
-        win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, input, 0)
-        time.sleep(0.05)
-        win32api.PostMessage(hwnd, win32con.WM_KEYUP, input, 0)
+        post_message(hwnd, input)
 
 
 def match_pattern_thread(hwnd, sc, pattern, key):
-    if match_found.is_set():
+    if sc is None:
         return
+    threading.current_thread().name = key
 
     res = cv2.matchTemplate(sc, pattern, cv2.TM_CCORR_NORMED)
     _, max_val, _, _ = cv2.minMaxLoc(res)
@@ -138,23 +136,19 @@ def match_pattern_thread(hwnd, sc, pattern, key):
     if max_val < THRESHOLD:
         return
 
-    match_found.set()
     press_key(hwnd, key)
+    return
 
 
 def main():
     """
-    Main entry point of the script.
+    Main entry point.
 
-    Grabs a frame from the HoloCure window and performs template matching with the patterns specified in `patterns`.
-    If a match is found, simulates the key press specified in `KEY_TO_PATTERN`.
-    If the key is "window", sends the key press twice with a short delay between.
-    If the HoloCure window is not found, prints a message and exits.
-    If the screen is blank, skips the frame and continues to the next iteration.
-    Uses `concurrent.futures` to run the template matching in parallel.
-
-        Returns:
-        None
+    - Grabs the screen of the HoloCure window
+    - Performs template matching on the grabbed screen
+    - Sends a key press event to the window if a pattern is matched
+    - Waits for 10 seconds if no pattern is matched
+    - If the matching is blank for more than 10 seconds, tries to initiate fishing by sending a Space key press event
     """
     patterns = generate_patterns()
 
@@ -164,34 +158,34 @@ def main():
         return
     win32gui.SetForegroundWindow(hwnd)
 
-    # Send escape key as a test
-    win32api.PostMessage(hwnd, win32con.WM_KEYDOWN, win32con.VK_ESCAPE, 0)
-    time.sleep(0.05)
-    win32api.PostMessage(hwnd, win32con.WM_KEYUP, win32con.VK_ESCAPE, 0)
+    start_time = time.time()
 
-    while True:
-        sc = grab_frame(hwnd)
-        if sc is None:
-            print("HoloCure window not found")
-            return
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(patterns), thread_name_prefix="TemplateMatcher"
+    ) as executor:
+        while True:
+            sc = grab_frame(hwnd)
+            if sc is None:
+                print("HoloCure window not found")
+                return
 
-        match_found.clear()
+            # Skip if the screen is blank
+            time_to_check = time.time() - start_time
+            if sc.sum() == 0:
+                if time_to_check > 10:
+                    print("Timeout, trying to initiate fishing...")
+                    post_message(hwnd, win32con.VK_SPACE)
+                    start_time = time.time() + 10
+                continue
 
-        # Skip if the screen is blank
-        if sc.sum() == 0:
-            continue
-
-        # Perform template matching
-        with concurrent.futures.ThreadPoolExecutor(
-            max_workers=len(patterns)
-        ) as executor:
+            # Perform template matching
             futures = []
             for key, pattern in patterns:
                 future = executor.submit(match_pattern_thread, hwnd, sc, pattern, key)
                 futures.append(future)
 
             for future in concurrent.futures.as_completed(futures):
-                pass
+                start_time = time.time() + 10
 
 
 if __name__ == "__main__":
