@@ -1,6 +1,6 @@
 # Idle Fishing for HoloCure
 
-Uses OpenCV, Pillow, and Windows API to automate HoloCure's fishing mini-game.
+Uses OpenCV and WinAPI to automate HoloCure's fishing mini-game.
 
 > [!NOTE]  
 > Please use this script only when you played HoloCure for a good amount of time by yourself. It practically breaks the economy and, as a result, fun.
@@ -9,22 +9,22 @@ Uses OpenCV, Pillow, and Windows API to automate HoloCure's fishing mini-game.
 
 ## How to use
 
-1. Install Python 3.12 or later
-2. `pip install -r requirements.txt` (I recommend creating a `venv` first)
-3. Open HoloCure, make it windowed, navigate to Holo House
-4. `python idle-fishing.py`, Esc menu should pop up
-5. Initiate fishing manually
-6. ...
-7. PROFIT!
-8. Halt the script when you want to stop fishing
+1. Install Python 3.12.x
+2. (optional, but recommended) Create a `venv`, activate it
+3. `pip install -r requirements.txt`
+4. Open HoloCure, make it windowed (resolution must be 1280x720), navigate to Holo House's pond
+5. Start the script by running `python idle-fishing.py`
+6. Wait for it to start fishing
+7. ...
+8. PROFIT!
 
-The HoloCure window must be on the foreground, but you can still use your PC as usual as the script does not interfere with your inputs.
+The HoloCure window **must** be on the foreground, but you can still use your PC as usual as the script does not interfere with your inputs.
 
 Make sure your mouse is not on top of the HoloCure window (specifically the target area of the fishing mini-game).
 
-## Known issues
+The script is written with a lot of comments, so you can easily understand what it does.
+
+## Limitations
 
 - Works only on Windows.
-- Tested only with 1280x720 resolution of the HoloCure window.
-- Template matching might fail on very high speed levels.
-- In rare occasions, fishing does not start automatically.
+- Works only in windowed mode with 1280x720 resolution.
