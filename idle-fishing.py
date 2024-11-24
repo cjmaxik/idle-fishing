@@ -8,18 +8,19 @@ import cv2
 from functools import cache
 
 # Constants
-DEBUG = False
-THRESHOLD = 0.95
-TEMPLATE_FOLDER = "./patterns/%s.png"
+DEBUG = True
 WINDOW_NAME = "HoloCure"
+TEMPLATE_FOLDER = "./patterns/%s.png"
+THRESHOLD = 0.95
+TIMEOUT = 10
 ACTIVE_AREA = (760, 510, 840, 560)
 KEY_TO_PATTERN = {
-    "up": 0x57,
-    "down": 0x53,
-    "center": 0x20,
-    "left": 0x41,
-    "right": 0x44,
-    "window": 0x0D,
+    "up": ord("W"),
+    "down": ord("S"),
+    "center": win32con.VK_SPACE,
+    "left": ord("A"),
+    "right": ord("D"),
+    "window": win32con.VK_SPACE,
 }
 
 
@@ -89,8 +90,8 @@ def grab_screenshot(hwnd: int) -> numpy.ndarray | None:
     bbox, w, h = get_bbox(win32gui.GetWindowRect(hwnd))
 
     # Get the device context of the window
-    hwnd = win32gui.GetDesktopWindow()
-    dc = win32gui.GetWindowDC(hwnd)
+    window = win32gui.GetDesktopWindow()
+    dc = win32gui.GetWindowDC(window)
     dc_obj = win32ui.CreateDCFromHandle(dc)
 
     # Create a compatible bitmap and get its handle
@@ -105,24 +106,22 @@ def grab_screenshot(hwnd: int) -> numpy.ndarray | None:
     # Bit block transfer the window's device context to the bitmap
     win32gui.BitBlt(mem_dc, 0, 0, w, h, dc, bbox[0], bbox[1], win32con.SRCCOPY)
 
-    # Release the device context
-    win32gui.ReleaseDC(hwnd, dc)
+    # Convert the bitmap to a numpy array
+    bitmap_img = numpy.frombuffer(bmp.GetBitmapBits(True), dtype=numpy.uint8)
+
+    # Release the handles
+    win32gui.DeleteObject(bmp_handle)
+    win32gui.ReleaseDC(window, dc)
     win32gui.DeleteDC(mem_dc)
 
-    # Convert the bitmap to a numpy array, reshape the array based on the bitmap's bits per pixel
-    bitmap_img = numpy.frombuffer(bmp.GetBitmapBits(True), dtype=numpy.uint8)
+    # Reshape the array, convert to grayscale, threshold the image
     color_img = bitmap_img.reshape((bbox[3] - bbox[1], bbox[2] - bbox[0], 4))
-
-    # Convert to grayscale, threshold the image
     img = cv2.cvtColor(color_img, cv2.COLOR_BGR2GRAY)
     numpy.putmask(img, img <= 248, 0)
 
-    # Delete the bitmap object
-    win32gui.DeleteObject(bmp_handle)
-
-    # debug: show imagegrab result
+    # Show imagegrab result
     if DEBUG:
-        # concatenate the color image and the grayscale image
+        # Show both original and masked images
         color_img = cv2.cvtColor(color_img, cv2.COLOR_BGR2RGB)
         gray_img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
         debug_img = numpy.concatenate((color_img, gray_img), axis=1)
@@ -154,12 +153,11 @@ def post_message(hwnd: int, input: int | None) -> None:
 def press_key(hwnd: int, key: str) -> None:
     """
     Simulates a key press event on the window specified by `hwnd`.
+    If the `key` is "window", sends the key press twice with a short delay between.
 
     Args:
         hwnd (int): Handle to the window where the key press should be simulated.
         key (str): The key to be pressed, mapped from `KEY_TO_PATTERN`.
-
-    If the `key` is "window", sends the key press twice with a short delay between.
     """
     input = KEY_TO_PATTERN.get(key)
 
@@ -172,7 +170,9 @@ def press_key(hwnd: int, key: str) -> None:
         post_message(hwnd, input)
 
 
-def match_pattern_thread(hwnd, sc, pattern, key) -> None:
+def pattern_matched(
+    hwnd: int, sc: numpy.ndarray, pattern: numpy.ndarray, key: str
+) -> bool:
     """
     Runs template matching on a given screen and pattern, and simulates a key press event on the window if the pattern is matched.
 
@@ -181,21 +181,28 @@ def match_pattern_thread(hwnd, sc, pattern, key) -> None:
         sc (ndarray): The screenshot of the window to match the pattern on.
         pattern (ndarray): The pattern to match on the screenshot.
         key (str): The key to be pressed if the pattern is matched, mapped from `KEY_TO_PATTERN`.
+
+    Returns:
+        bool: True if the pattern is matched, False otherwise.
     """
     if sc is None:
-        return
+        return False
 
     res = cv2.matchTemplate(sc, pattern, cv2.TM_CCORR_NORMED)
     _, max_val, _, _ = cv2.minMaxLoc(res)
 
     if max_val < THRESHOLD:
-        return
-
-    if DEBUG:
-        print("Matched pattern:", key)
+        return False
 
     press_key(hwnd, key)
-    return
+
+    if DEBUG:
+        if key == "window":
+            print("\r-- Matched pattern: %s, waiting...\r" % key)
+        else:
+            print("\rMatched pattern:", key)
+
+    return True
 
 
 def main() -> None:
@@ -215,6 +222,7 @@ def main() -> None:
         return
     win32gui.SetForegroundWindow(hwnd)
 
+    # Initialize the fishing check
     last_idle_time = time.time()
 
     while True:
@@ -223,22 +231,30 @@ def main() -> None:
             print("Unable to create HoloCure screenshot")
             return
 
-        # Skip if the screen is blank
+        # Calculate the time since the last idle check
         time_to_check = time.time() - last_idle_time
-        if sc.sum() == 0:
+
+        # Check if the screen is blank
+        if sc.sum() > 0:
+            # Perform template matching, break if any pattern is matched
+            for key, pattern in patterns:
+                if pattern_matched(hwnd, sc, pattern, key):
+                    # Update the fishing check and break out of current iteration
+                    last_idle_time = time.time()
+                    break
+        else:
             # If the screen is blank for more than 10 seconds, try to initiate fishing
+            print(
+                "\rIdle check: %.0f seconds left..." % (TIMEOUT - time_to_check),
+                end="",
+            )
+
             if time_to_check > 10:
-                print("Timeout, trying to initiate fishing...")
+                print("\r--- Timeout, trying to initiate fishing...")
                 post_message(hwnd, win32con.VK_SPACE)
-                last_idle_time = time.time() + 10
-            continue
 
-        # Perform template matching
-        for key, pattern in patterns:
-            match_pattern_thread(hwnd, sc, pattern, key)
-
-        # Update the fishing check
-        last_idle_time = time.time() + 10
+                # Update the fishing check
+                last_idle_time = time.time()
 
 
 if __name__ == "__main__":
